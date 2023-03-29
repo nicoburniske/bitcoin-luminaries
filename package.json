@@ -1,0 +1,23 @@
+{
+  "name": "gt-helper-extension",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/app.js",
+  "scripts": {
+    "watch": "tsc -w",
+    "start": "node dist/app.js",
+    "update": "npm i @gathertown/gather-game-client@latest --save"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@gathertown/gather-game-client": "^38.0.1",
+    "dotenv": "^16.0.2",
+    "isomorphic-ws": "^4.0.1",
+    "npm": "^7.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.24"
+  }
+}
