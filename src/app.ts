@@ -1,6 +1,7 @@
 import { Game, PlayerChats } from '@gathertown/gather-game-client'
 import { z } from 'zod'
 import { sliceIntoChunks } from './utils'
+global.WebSocket = require('isomorphic-ws')
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 require('dotenv').config()
@@ -33,13 +34,14 @@ const run = async (): Promise<void> => {
    }))
 
    // Create initial connection for all NPCs.
-   const connectResults = npcs.map(g => g.game.connect())
-   if (connectResults.some(r => !r)) {
-      throw new Error('Failed to configure all NPCs')
-   }
+   const connectResults = npcs.map(async g => {
+      g.game.connect()
+      return await g.game.waitForInit()
+   })
    await Promise.all(connectResults)
 
    // Create chat subscriptions.
+   npcs.forEach(npc => runNPC(npc))
    // What are the events we need to listen for?
 }
 
@@ -80,6 +82,21 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
+   const npcToInteractableObject: { [key: string]: string } = {
+      FILL_IN_OBJECT_ID: 'saylor',
+   }
+
+   npc.game.subscribeToEvent('playerInteracts', ({ playerInteracts }, context) => {
+      const playerId = context.playerId
+      const objectId = playerInteracts.objId
+
+      console.log('objectId', objectId)
+
+      const npcId = npcToInteractableObject[objectId]
+
+      npc.game.chat(npcId, [], context.map?.id ?? '', { contents: `Hello ${playerId}!` })
+   })
+
    npc.game.subscribeToEvent('playerChats', ({ playerChats }, context) => {
       // TODO: consider permissions. Can owners eavesdrop?
 
@@ -97,9 +114,7 @@ const runNPC = (npc: Npc): void => {
       // do something.
    })
 
-   // handle interact?
-   // handle dms
-   // Handle player disconnect from room. Delete chat history.
+   // TODO: Handle player disconnect from room. Delete chat history.
 }
 
 // TODO: Connect to OpenAI
@@ -119,4 +134,4 @@ const getResponseNPC = async (prompt: string, messages: string[]): Promise<strin
 //   );
 // });
 
-// run()
+run()
