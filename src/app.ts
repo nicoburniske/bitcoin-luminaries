@@ -1,4 +1,5 @@
 import { Game, PlayerChats } from '@gathertown/gather-game-client'
+import assert from 'assert'
 import { z } from 'zod'
 import { sliceIntoChunks } from './utils'
 global.WebSocket = require('isomorphic-ws')
@@ -52,8 +53,7 @@ type Npc = {
 }
 
 type PlayerInteractionState = {
-   //  playerId: string
-   // User or both?
+   mapId: string | undefined
    messages: Message[]
 }
 type Message =
@@ -64,8 +64,9 @@ type Message =
    // TODO: can we flatten this?
    | ({ type: 'PLAYER' } & PlayerChats)
 
-// TODO:
 const runNPC = (npc: Npc): void => {
+   npc.game.enter({ isNpc: true })
+
    // Key string is user id.
    const states = new Map<string, PlayerInteractionState>()
 
@@ -82,19 +83,38 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
+   npc.game.subscribeToEvent('playerMoves', ({ playerMoves }, context) => {
+      // Listen to for the mapId and save it to the player
+      if (playerMoves.mapId) {
+         const playerId = context.playerId as string
+         const mapId = playerMoves.mapId
+         const interaction = states.get(playerId)
+         if (interaction) {
+            interaction.mapId = mapId
+         } else {
+            states.set(playerId, { mapId, messages: [] })
+         }
+      }
+   })
+
    const npcToInteractableObject: { [key: string]: string } = {
-      FILL_IN_OBJECT_ID: 'saylor',
+      'HologramAvatar - e86LVs7JpcL3lbuK85oz_162ad252-6ce1-4410-8a8c-90436562252e': 'saylor',
    }
 
-   npc.game.subscribeToEvent('playerInteracts', ({ playerInteracts }, context) => {
-      const playerId = context.playerId
-      const objectId = playerInteracts.objId
+   npc.game.subscribeToEvent('playerTriggersItem', ({ playerTriggersItem }, context) => {
+      const playerId = context.playerId as string
+
+      // TODO: Update assertions to return if not met.
+      const objectId = playerTriggersItem.closestObject
+      assert(objectId, 'No closest object')
 
       console.log('objectId', objectId)
 
       const npcId = npcToInteractableObject[objectId]
 
-      npc.game.chat(npcId, [], context.map?.id ?? '', { contents: `Hello ${playerId}!` })
+      const mapId = states.get(playerId)?.mapId ?? 'blank'
+
+      npc.game.chat(playerId, [], mapId, { contents: `Hello ${context.player?.name}!` })
    })
 
    npc.game.subscribeToEvent('playerChats', ({ playerChats }, context) => {
@@ -102,13 +122,14 @@ const runNPC = (npc: Npc): void => {
 
       // First interaction
       const { senderId } = playerChats
-      if (!Object.keys(states).includes(playerChats.senderId)) {
-         const newInteraction: PlayerInteractionState = { messages: [{ type: 'PLAYER', ...playerChats }] }
-         states.set(senderId, newInteraction)
-      }
 
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const interaction = states.get(senderId)!
+      // Append the message to the player's state.
+      const interaction = states.get(senderId)
+      if (interaction) {
+         interaction.messages.push({ type: 'PLAYER', ...playerChats })
+      } else {
+         throw new Error('Interaction state should be defined')
+      }
 
       // const reply = getResponseNPC('prompt', interaction.messages.map(m => m.message))
       // do something.
