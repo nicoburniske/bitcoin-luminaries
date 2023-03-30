@@ -1,19 +1,24 @@
 import { Game, PlayerChats } from '@gathertown/gather-game-client'
 import { z } from 'zod'
+import { sliceIntoChunks } from './utils'
 
-// require('dotenv').config()
-
-// NPC -> Requires Account (API Key Per Account)
-const npcConfigSchema = z.object({
-   id: z.string(),
-   apiKey: z.string(),
-})
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require('dotenv').config()
 
 const configSchema = z.object({
    NODE_ENV: z.enum(['development', 'test', 'production']),
-   NPC_CONFIGS: npcConfigSchema.array(),
-   OPEN_AI_API_KEY: z.string(),
+   OPENAI_API_KEY: z.string(),
    SPACE_ID: z.string(),
+   // NPC_CONFIGS is a flat array of string.
+   // Adjacent strings are paired together.
+   // Pair should be [id, apiKey]
+   NPC_CONFIGS: z
+      .string()
+      .transform(s => JSON.parse(s))
+      .pipe(z.string().array())
+      .transform(arr => sliceIntoChunks(arr, 2))
+      .refine(chunks => chunks.every(c => c.length === 2), { message: 'Invalid NPC Configs' })
+      .transform(chunks => chunks.map(c => ({ id: c[0], apiKey: c[1] }))),
 })
 
 const config = configSchema.parse(process.env)
@@ -55,7 +60,7 @@ type Message =
         message: string
      }
    // TODO: can we flatten this?
-   | { type: 'PLAYER'; playerChat: PlayerChats }
+   | ({ type: 'PLAYER' } & PlayerChats)
 
 // TODO:
 const runNPC = (npc: Npc): void => {
@@ -81,7 +86,7 @@ const runNPC = (npc: Npc): void => {
       // First interaction
       const { senderId } = playerChats
       if (!Object.keys(states).includes(playerChats.senderId)) {
-         const newInteraction: PlayerInteractionState = { messages: [{ type: 'PLAYER', playerChat: playerChats }] }
+         const newInteraction: PlayerInteractionState = { messages: [{ type: 'PLAYER', ...playerChats }] }
          states.set(senderId, newInteraction)
       }
 
@@ -114,4 +119,4 @@ const getResponseNPC = async (prompt: string, messages: string[]): Promise<strin
 //   );
 // });
 
-run()
+// run()
