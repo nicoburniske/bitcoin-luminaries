@@ -2,6 +2,7 @@ import { Game, PlayerChats } from '@gathertown/gather-game-client'
 import assert from 'assert'
 import { z } from 'zod'
 import { sliceIntoChunks } from './utils'
+import { OpenAiService } from './functions/open-ai'
 global.WebSocket = require('isomorphic-ws')
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -24,6 +25,8 @@ const configSchema = z.object({
 })
 
 const config = configSchema.parse(process.env)
+
+const openAI = OpenAiService(config.OPENAI_API_KEY)
 
 // Runtime loop for chat ->
 // 3 states -> first message, not first  message, end convo.
@@ -53,24 +56,25 @@ type Npc = {
 }
 
 type PlayerInteractionState = {
-   mapId: string | undefined
+   mapId: string
    messages: Message[]
 }
-type Message =
-   | {
-        type: 'NPC'
-        message: string
-     }
-   // TODO: can we flatten this?
-   | ({ type: 'PLAYER' } & PlayerChats)
 
+type Message = ({ type: 'NPC' } & PlayerChats) | ({ type: 'PLAYER' } & PlayerChats)
+
+/**
+ * Established event listeners for a given NPC.
+ * Stores all active conversations with players in world.
+ *
+ * @param npc NPC to run.
+ */
 const runNPC = (npc: Npc): void => {
    npc.game.enter({ isNpc: true })
 
    // Key string is user id.
    const states = new Map<string, PlayerInteractionState>()
 
-   // Handle NPC disconnection.
+   // Handle NPC connection events.
    npc.game.subscribeToDisconnection(disconnected => {
       console.error('ERROR! Disconnected', disconnected)
    })
@@ -83,11 +87,12 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
+   // Listen to for the mapId and save it to the player.
+   // TODO: is there another way to get the map id???
    npc.game.subscribeToEvent('playerMoves', ({ playerMoves }, context) => {
-      // Listen to for the mapId and save it to the player
-      if (playerMoves.mapId) {
+      const mapId = playerMoves.mapId ?? context.map?.id
+      if (mapId) {
          const playerId = context.playerId as string
-         const mapId = playerMoves.mapId
          const interaction = states.get(playerId)
          if (interaction) {
             interaction.mapId = mapId
@@ -102,37 +107,75 @@ const runNPC = (npc: Npc): void => {
    }
 
    npc.game.subscribeToEvent('playerTriggersItem', ({ playerTriggersItem }, context) => {
-      const playerId = context.playerId as string
-
-      // TODO: Update assertions to return if not met.
+      const playerId = context.playerId
       const objectId = playerTriggersItem.closestObject
-      assert(objectId, 'No closest object')
 
-      console.log('objectId', objectId)
-
-      const npcId = npcToInteractableObject[objectId]
-
-      const mapId = states.get(playerId)?.mapId ?? 'blank'
-
-      npc.game.chat(playerId, [], mapId, { contents: `Hello ${context.player?.name}!` })
+      if (playerId && objectId) {
+         const state = states.get(playerId)
+         if (state?.messages.length === 0) {
+            const mapId = state.mapId ?? 'blank'
+            const firstMessage = context.player?.name ? `Hello ${context.player.name}!` : 'Hello!'
+            npc.game.chat(playerId, [], mapId, { contents: firstMessage })
+         }
+      }
    })
 
-   npc.game.subscribeToEvent('playerChats', ({ playerChats }, context) => {
-      // TODO: consider permissions. Can owners eavesdrop?
-
-      // First interaction
+   npc.game.subscribeToEvent('playerChats', async ({ playerChats }, context) => {
       const { senderId } = playerChats
+      const isNpcMessage = context.player?.isNpc
 
       // Append the message to the player's state.
-      const interaction = states.get(senderId)
-      if (interaction) {
-         interaction.messages.push({ type: 'PLAYER', ...playerChats })
+      const interaction = states.get(isNpcMessage ? playerChats.recipient : playerChats.senderId)
+      if (interaction !== undefined) {
+         interaction.messages.push({ type: isNpcMessage ? 'NPC' : 'PLAYER', ...playerChats })
       } else {
          throw new Error('Interaction state should be defined')
       }
 
-      // const reply = getResponseNPC('prompt', interaction.messages.map(m => m.message))
-      // do something.
+      if (!isNpcMessage) {
+         // if (false) {
+         const allMessages = interaction.messages
+            .map(m => {
+               if (m.type === 'NPC') {
+                  return 'NPC: ' + m.contents
+               } else {
+                  return 'User: ' + m.contents
+               }
+            })
+            .join('\n')
+
+         const aiContext = `
+            You are a prominent engineer, entrepreneur, technologist, Bitcoiner. Your name is Michael Saylor.  These are some of your views.
+
+            - Bitcoin, not Crypto.
+            - You may not be interested in War, but War is interested in you
+            - There are decades where nothing happens, and there are weeks where decades happen.
+            - There’s never been such a thing as a fair fight.
+            - Bitcoin has the highest bandwith price discovery mechanism of any asset.
+            - Bitcoin is not constrained by the lowest common denominator, it’s strengthened by the highest common denominator.
+            - If money is energy and energy begats life, and Bitcoin gives you sovereignty, then that’s the path to immortality. 
+            - Bitcoin is a high frequency store of value, low frequency settlement network
+            - Bitcoin is an apolitical commodity, a treasury reserve asset.
+            - Bitcoin is the only good application of blockchain technology so far.
+          `
+
+         const allContext = `
+          ${aiContext}
+
+          ${allMessages}
+
+          NPC: 
+          `
+
+         const completion = await openAI.getCompletion(allContext)
+         const response = completion.data.choices[0].text?.trim()
+
+         if (response === undefined) {
+            console.error('No response from OpenAI')
+         } else {
+            npc.game.chat(senderId, [], interaction.mapId, { contents: response })
+         }
+      }
    })
 
    // TODO: Handle player disconnect from room. Delete chat history.
@@ -144,15 +187,5 @@ const getResponseNPC = async (prompt: string, messages: string[]): Promise<strin
 }
 
 // game.subscribeToConnection((connected) => console.log("connected?", connected));
-
-// /**** the good stuff ****/
-
-// game.subscribeToEvent("playerMoves", (data, context) => {
-//   console.log(
-//     context?.player?.name ?? context.playerId,
-//     "moved in direction",
-//     data.playerMoves.direction
-//   );
-// });
 
 run()
