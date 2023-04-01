@@ -102,15 +102,12 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
-   const npcToInteractableObject: { [key: string]: string } = {
-      'HologramAvatar - e86LVs7JpcL3lbuK85oz_162ad252-6ce1-4410-8a8c-90436562252e': 'saylor',
-   }
-
    npc.game.subscribeToEvent('playerTriggersItem', ({ playerTriggersItem }, context) => {
       const playerId = context.playerId
       const objectId = playerTriggersItem.closestObject
 
-      if (playerId && objectId) {
+      // Ensure that player is talking to the NPC object.
+      if (playerId && objectId && npcObjects[objectId] === npc.id) {
          const state = states.get(playerId)
          if (state?.messages.length === 0) {
             const mapId = state.mapId ?? 'blank'
@@ -120,12 +117,14 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
+   // We receive message events for both the player and the NPC.
    npc.game.subscribeToEvent('playerChats', async ({ playerChats }, context) => {
       const { senderId } = playerChats
       const isNpcMessage = context.player?.isNpc
+      const playerId = isNpcMessage ? playerChats.recipient : playerChats.senderId
 
       // Append the message to the player's state.
-      const interaction = states.get(isNpcMessage ? playerChats.recipient : playerChats.senderId)
+      const interaction = states.get(playerId)
       if (interaction !== undefined) {
          interaction.messages.push({ type: isNpcMessage ? 'NPC' : 'PLAYER', ...playerChats })
       } else {
@@ -144,28 +143,16 @@ const runNPC = (npc: Npc): void => {
             })
             .join('\n')
 
-         const aiContext = `
-            You are a prominent engineer, entrepreneur, technologist, Bitcoiner. Your name is Michael Saylor.  These are some of your views.
+         const aiContext = npcContext[npc.id]
 
-            - Bitcoin, not Crypto.
-            - You may not be interested in War, but War is interested in you
-            - There are decades where nothing happens, and there are weeks where decades happen.
-            - There’s never been such a thing as a fair fight.
-            - Bitcoin has the highest bandwith price discovery mechanism of any asset.
-            - Bitcoin is not constrained by the lowest common denominator, it’s strengthened by the highest common denominator.
-            - If money is energy and energy begats life, and Bitcoin gives you sovereignty, then that’s the path to immortality. 
-            - Bitcoin is a high frequency store of value, low frequency settlement network
-            - Bitcoin is an apolitical commodity, a treasury reserve asset.
-            - Bitcoin is the only good application of blockchain technology so far.
-          `
+         assert(aiContext !== undefined, `NPC context not defined for ${npc.id}`)
 
          const allContext = `
           ${aiContext}
 
           ${allMessages}
 
-          NPC: 
-          `
+          NPC: `.trim()
 
          const completion = await openAI.getCompletion(allContext)
          const response = completion.data.choices[0].text?.trim()
@@ -181,11 +168,36 @@ const runNPC = (npc: Npc): void => {
    // TODO: Handle player disconnect from room. Delete chat history.
 }
 
-// TODO: Connect to OpenAI
-const getResponseNPC = async (prompt: string, messages: string[]): Promise<string> => {
-   return 'reply!'
+run()
+
+const npcObjects: { [key: string]: string } = {
+   'z5KQlmHTRBCxZ-fqQ0R2_5c51f5f0-f157-44c8-8b74-fb3ef9d0687d': 'saylor',
 }
 
-// game.subscribeToConnection((connected) => console.log("connected?", connected));
+const npcContext = (() => {
+   const values = {
+      saylor: `
+          You are a prominent engineer, entrepreneur, technologist, Bitcoiner. Your name is 'Not Michael Saylor'.  These are some of your views.
+            - Bitcoin, not Crypto.
+            - Most non-Bitcoin crypto are securities, not commondities.
+            - You may not be interested in War, but War is interested in you
+            - There are decades where nothing happens, and there are weeks where decades happen.
+            - There’s never been such a thing as a fair fight.
+            - Bitcoin has the highest bandwith price discovery mechanism of any asset.
+            - Bitcoin is not constrained by the lowest common denominator, it’s strengthened by the highest common denominator.
+            - If money is energy and energy begats life, and Bitcoin gives you sovereignty, then that’s the path to immortality. 
+            - Bitcoin is a high frequency store of value, low frequency settlement network
+            - Bitcoin is an apolitical commodity, a treasury reserve asset.
+            - Bitcoin is the only good application of blockchain technology so far.
+  `,
+   }
+   return mapValues(values, (_, value) => value.trim())
+})()
 
-run()
+type GenObject<V> = { [key: string]: V }
+function mapValues<V, R>(obj: GenObject<V>, func: (key: string, value: V) => R): GenObject<R> {
+   return Object.entries(obj).reduce((acc, [key, value]) => {
+      acc[key] = func(key, value)
+      return acc
+   }, {} as GenObject<R>)
+}
