@@ -50,13 +50,13 @@ const run = async (): Promise<void> => {
 }
 
 type Npc = {
+   // Human readable id.
    id: string
    apiKey: string
    game: Game
 }
 
 type PlayerInteractionState = {
-   mapId: string
    messages: Message[]
 }
 
@@ -87,21 +87,6 @@ const runNPC = (npc: Npc): void => {
       }
    })
 
-   // Listen to for the mapId and save it to the player.
-   // TODO: is there another way to get the map id???
-   npc.game.subscribeToEvent('playerMoves', ({ playerMoves }, context) => {
-      const mapId = playerMoves.mapId ?? context.map?.id
-      if (mapId) {
-         const playerId = context.playerId as string
-         const interaction = states.get(playerId)
-         if (interaction) {
-            interaction.mapId = mapId
-         } else {
-            states.set(playerId, { mapId, messages: [] })
-         }
-      }
-   })
-
    npc.game.subscribeToEvent('playerTriggersItem', ({ playerTriggersItem }, context) => {
       const playerId = context.playerId
       const objectId = playerTriggersItem.closestObject
@@ -109,8 +94,8 @@ const runNPC = (npc: Npc): void => {
       // Ensure that player is talking to the NPC object.
       if (playerId && objectId && npcObjects[objectId] === npc.id) {
          const state = states.get(playerId)
-         if (state?.messages.length === 0) {
-            const mapId = state.mapId ?? 'blank'
+         if (state === undefined) {
+            const mapId = getPlayerMapId(npc.game, playerId)
             const firstMessage = context.player?.name ? `Hello ${context.player.name}!` : 'Hello!'
             npc.game.chat(playerId, [], mapId, { contents: firstMessage })
          }
@@ -125,15 +110,17 @@ const runNPC = (npc: Npc): void => {
 
       // Append the message to the player's state.
       const interaction = states.get(playerId)
+      const newMessage: Message = { type: isNpcMessage ? 'NPC' : 'PLAYER', ...playerChats }
       if (interaction !== undefined) {
-         interaction.messages.push({ type: isNpcMessage ? 'NPC' : 'PLAYER', ...playerChats })
+         interaction.messages.push(newMessage)
       } else {
-         throw new Error('Interaction state should be defined')
+         states.set(playerId, { messages: [newMessage] })
       }
 
+      const messages = states.get(playerId)!.messages
+
       if (!isNpcMessage) {
-         // if (false) {
-         const allMessages = interaction.messages
+         const allMessages = messages
             .map(m => {
                if (m.type === 'NPC') {
                   return 'NPC: ' + m.contents
@@ -160,7 +147,8 @@ const runNPC = (npc: Npc): void => {
          if (response === undefined) {
             console.error('No response from OpenAI')
          } else {
-            npc.game.chat(senderId, [], interaction.mapId, { contents: response })
+            const mapId = getPlayerMapId(npc.game, playerId)
+            npc.game.chat(senderId, [], mapId, { contents: response })
          }
       }
    })
@@ -169,6 +157,12 @@ const runNPC = (npc: Npc): void => {
 }
 
 run()
+
+const getPlayerMapId = (game: Game, playerId: string) => {
+   const mapId = game.players[playerId]?.map
+   assert(mapId, `Player ${playerId} is not in a map`)
+   return mapId
+}
 
 const npcObjects: { [key: string]: string } = {
    'z5KQlmHTRBCxZ-fqQ0R2_5c51f5f0-f157-44c8-8b74-fb3ef9d0687d': 'saylor',
